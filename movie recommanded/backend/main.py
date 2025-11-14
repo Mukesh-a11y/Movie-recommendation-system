@@ -7,7 +7,7 @@ from groq import Groq
 import json
 import uuid
 
-GROQ_API_KEY = "enter api key here"  
+GROQ_API_KEY = "enter your api key"  
 
 
 app = Flask(__name__)
