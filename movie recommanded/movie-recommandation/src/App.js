@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Film, Sparkles, Search, Star, Calendar, Clock, TrendingUp, Play, BookmarkPlus, Share2, BarChart3, ChevronDown, ChevronRight } from 'lucide-react';
+import { Film, Sparkles, Search, Star, Calendar, Clock, TrendingUp, Play, BookmarkPlus, Share2, BarChart3, ChevronDown, ChevronRight, AlertCircle } from 'lucide-react';
+
+const API_BASE_URL = "http://localhost:5000";
 
 function App() {
   const [preference, setPreference] = useState('');
@@ -12,9 +14,26 @@ function App() {
   const [showGenreDropdown, setShowGenreDropdown] = useState(false);
   const [showYearDropdown, setShowYearDropdown] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
+  const [sessionId, setSessionId] = useState('');
 
   const genreDropdownRef = useRef(null);
   const yearDropdownRef = useRef(null);
+
+  // Initialize session ID on mount
+  useEffect(() => {
+    const storedSessionId = generateSessionId();
+    setSessionId(storedSessionId);
+  }, []);
+
+  // Generate or retrieve session ID
+  const generateSessionId = () => {
+    let sid = sessionStorage.getItem('cineai_session_id');
+    if (!sid) {
+      sid = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      sessionStorage.setItem('cineai_session_id', sid);
+    }
+    return sid;
+  };
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -90,47 +109,52 @@ function App() {
     setMovies([]);
 
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch(`${API_BASE_URL}/api/recommend`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1000,
-          messages: [
-            {
-              role: 'user',
-              content: `Based on this preference: "${preference}", recommend exactly 5 movies. For each movie, provide the title, year, genre, a brief description (2-3 sentences), and a rating out of 10.
-
-Format your response as JSON only, with no preamble or markdown:
-[
-  {
-    "title": "Movie Title",
-    "year": 2020,
-    "genre": "Action, Thriller",
-    "description": "Brief description here.",
-    "rating": 8.5
-  }
-]`
-            }
-          ]
+          query: preference,
+          session_id: sessionId
         })
       });
 
+      if (!response.ok) {
+        throw new Error(`Server error: ${response.status}`);
+      }
+
       const data = await response.json();
-      const content = data.content.find(item => item.type === 'text')?.text || '';
       
-      const cleanContent = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      const movieList = JSON.parse(cleanContent);
-      
-      setMovies(movieList);
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to get recommendations');
+      }
+
+      if (data.movies && Array.isArray(data.movies)) {
+        setMovies(data.movies);
+        setError('');
+      } else {
+        throw new Error('Invalid response format from server');
+      }
     } catch (err) {
-      setError('Failed to get recommendations. Please try again.');
       console.error('Error:', err);
+      setError(err.message || 'Failed to get recommendations. Please check if the backend server is running on http://localhost:5000');
+      setMovies([]);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleClear = () => {
+    setPreference('');
+    setMovies([]);
+    setSearched(false);
+    setError('');
+    setSelectedCategories([]);
+    setSelectedYears([]);
+    setShowGenreDropdown(false);
+    setShowYearDropdown(false);
+    setShowAnalytics(false);
   };
 
   const styles = {
@@ -350,7 +374,7 @@ Format your response as JSON only, with no preamble or markdown:
       border: '1px solid rgba(239, 68, 68, 0.3)',
       borderRadius: '12px',
       display: 'flex',
-      alignItems: 'center',
+      alignItems: 'flex-start',
       gap: '12px',
     },
     loadingContainer: {
@@ -473,7 +497,7 @@ Format your response as JSON only, with no preamble or markdown:
             {/* Dropdown Selectors */}
             <div style={styles.dropdownContainer}>
               {/* Genre Dropdown */}
-              <div style={styles.dropdownWrapper}>
+              <div style={styles.dropdownWrapper} ref={genreDropdownRef}>
                 <button
                   onClick={() => setShowGenreDropdown(!showGenreDropdown)}
                   style={{
@@ -542,7 +566,7 @@ Format your response as JSON only, with no preamble or markdown:
               </div>
 
               {/* Year Dropdown */}
-              <div style={styles.dropdownWrapper}>
+              <div style={styles.dropdownWrapper} ref={yearDropdownRef}>
                 <button
                   onClick={() => setShowYearDropdown(!showYearDropdown)}
                   style={{
@@ -632,7 +656,7 @@ Format your response as JSON only, with no preamble or markdown:
               <button
                 onClick={handleSubmit}
                 disabled={loading}
-                style={{...styles.primaryButton, opacity: loading ? 0.6 : 1}}
+                style={{...styles.primaryButton, opacity: loading ? 0.6 : 1, cursor: loading ? 'not-allowed' : 'pointer'}}
                 onMouseEnter={(e) => !loading && (e.target.style.transform = 'translateY(-2px)')}
                 onMouseLeave={(e) => e.target.style.transform = 'translateY(0)'}
               >
@@ -650,46 +674,43 @@ Format your response as JSON only, with no preamble or markdown:
               </button>
 
               <button
-                onClick={() => {
-                  setPreference('');
-                  setMovies([]);
-                  setSearched(false);
-                  setError('');
-                  setSelectedCategories([]);
-                  setSelectedYears([]);
-                  setShowGenreDropdown(false);
-                  setShowYearDropdown(false);
-                }}
-                style={styles.secondaryButton}
-                onMouseEnter={(e) => e.target.style.background = 'rgba(51, 65, 85, 0.5)'}
+                onClick={handleClear}
+                disabled={loading}
+                style={{...styles.secondaryButton, opacity: loading ? 0.6 : 1, cursor: loading ? 'not-allowed' : 'pointer'}}
+                onMouseEnter={(e) => !loading && (e.target.style.background = 'rgba(51, 65, 85, 0.5)')}
                 onMouseLeave={(e) => e.target.style.background = 'rgba(30, 41, 59, 0.5)'}
               >
                 <Sparkles size={20} />
                 <span>Clear</span>
               </button>
 
-              <button
-                onClick={() => setShowAnalytics(!showAnalytics)}
-                style={{
-                  ...styles.secondaryButton,
-                  ...(showAnalytics ? {background: 'rgba(51, 65, 85, 0.5)', borderColor: 'rgba(96, 165, 250, 0.5)'} : {})
-                }}
-                onMouseEnter={(e) => e.target.style.background = 'rgba(51, 65, 85, 0.5)'}
-                onMouseLeave={(e) => {
-                  if (!showAnalytics) {
-                    e.target.style.background = 'rgba(30, 41, 59, 0.5)';
-                  }
-                }}
-              >
-                <BarChart3 size={20} />
-                <span>Analytics</span>
-              </button>
+              {movies.length > 0 && (
+                <button
+                  onClick={() => setShowAnalytics(!showAnalytics)}
+                  style={{
+                    ...styles.secondaryButton,
+                    ...(showAnalytics ? {background: 'rgba(51, 65, 85, 0.5)', borderColor: 'rgba(96, 165, 250, 0.5)'} : {})
+                  }}
+                  onMouseEnter={(e) => e.target.style.background = 'rgba(51, 65, 85, 0.5)'}
+                  onMouseLeave={(e) => {
+                    if (!showAnalytics) {
+                      e.target.style.background = 'rgba(30, 41, 59, 0.5)';
+                    }
+                  }}
+                >
+                  <BarChart3 size={20} />
+                  <span>{showAnalytics ? 'Hide Analytics' : 'Show Analytics'}</span>
+                </button>
+              )}
             </div>
 
             {error && (
               <div style={styles.errorBox}>
-                <div style={{width: '8px', height: '8px', background: '#ef4444', borderRadius: '50%', animation: 'pulse 2s infinite'}}></div>
-                <p style={{color: '#fca5a5', fontSize: '14px', margin: 0}}>{error}</p>
+                <AlertCircle size={20} color="#ef4444" style={{flexShrink: 0, marginTop: '2px'}} />
+                <div>
+                  <p style={{color: '#fca5a5', fontSize: '14px', margin: 0, fontWeight: '600'}}>Error</p>
+                  <p style={{color: '#fca5a5', fontSize: '13px', margin: '4px 0 0 0', opacity: 0.9}}>{error}</p>
+                </div>
               </div>
             )}
           </div>
@@ -809,7 +830,7 @@ Format your response as JSON only, with no preamble or markdown:
               border: '1px solid rgba(59, 130, 246, 0.2)'
             }}>
               <h3 style={{color: '#dbeafe', fontSize: '20px', fontWeight: '600', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px'}}>
-                <Clock size={24} color="#60a5fa" />
+                <Film size={24} color="#60a5fa" />
                 Genre Distribution
               </h3>
               <div style={{display: 'flex', flexDirection: 'column', gap: '16px'}}>
@@ -821,21 +842,23 @@ Format your response as JSON only, with no preamble or markdown:
                       genreCounts[genre] = (genreCounts[genre] || 0) + 1;
                     });
                   });
-                  return Object.entries(genreCounts).map(([genre, count]) => (
-                    <div key={genre} style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
-                      <span style={{color: '#93c5fd', fontSize: '14px', fontWeight: '500', minWidth: '120px'}}>{genre}</span>
-                      <div style={{flex: 1, height: '12px', background: 'rgba(30, 41, 59, 0.5)', borderRadius: '6px', overflow: 'hidden'}}>
-                        <div style={{
-                          width: `${(count / movies.length) * 100}%`,
-                          height: '100%',
-                          background: 'linear-gradient(90deg, #3b82f6, #6366f1)',
-                          borderRadius: '6px',
-                          transition: 'width 0.6s ease'
-                        }}></div>
+                  return Object.entries(genreCounts)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([genre, count]) => (
+                      <div key={genre} style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
+                        <span style={{color: '#93c5fd', fontSize: '14px', fontWeight: '500', minWidth: '120px'}}>{genre}</span>
+                        <div style={{flex: 1, height: '12px', background: 'rgba(30, 41, 59, 0.5)', borderRadius: '6px', overflow: 'hidden'}}>
+                          <div style={{
+                            width: `${(count / movies.length) * 100}%`,
+                            height: '100%',
+                            background: 'linear-gradient(90deg, #3b82f6, #6366f1)',
+                            borderRadius: '6px',
+                            transition: 'width 0.6s ease'
+                          }}></div>
+                        </div>
+                        <span style={{color: '#60a5fa', fontSize: '14px', fontWeight: '600', minWidth: '40px', textAlign: 'right'}}>{count}</span>
                       </div>
-                      <span style={{color: '#60a5fa', fontSize: '14px', fontWeight: '600', minWidth: '40px', textAlign: 'right'}}>{count}</span>
-                    </div>
-                  ));
+                    ));
                 })()}
               </div>
             </div>
@@ -895,10 +918,10 @@ Format your response as JSON only, with no preamble or markdown:
                   </div>
 
                   <div style={styles.movieInfo}>
-                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '16px'}}>
-                      <div style={{flex: 1}}>
+                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '16px', flexWrap: 'wrap', gap: '16px'}}>
+                      <div style={{flex: 1, minWidth: '200px'}}>
                         <h3 style={styles.movieTitle}>{movie.title}</h3>
-                        <div>
+                        <div style={{display: 'flex', flexWrap: 'wrap', gap: '8px'}}>
                           <span style={styles.badge}>
                             <Calendar size={16} />
                             {movie.year}
@@ -918,15 +941,84 @@ Format your response as JSON only, with no preamble or markdown:
                     <p style={styles.description}>{movie.description}</p>
 
                     <div style={{display: 'flex', gap: '12px', marginTop: '16px', flexWrap: 'wrap'}}>
-                      <button style={{padding: '10px 20px', background: 'rgba(59, 130, 246, 0.2)', border: '1px solid rgba(59, 130, 246, 0.4)', color: '#93c5fd', borderRadius: '12px', fontSize: '14px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                      <button 
+                        style={{
+                          padding: '10px 20px', 
+                          background: 'rgba(59, 130, 246, 0.2)', 
+                          border: '1px solid rgba(59, 130, 246, 0.4)', 
+                          color: '#93c5fd', 
+                          borderRadius: '12px', 
+                          fontSize: '14px', 
+                          fontWeight: '500', 
+                          cursor: 'pointer', 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: '8px',
+                          transition: 'all 0.3s'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.target.style.background = 'rgba(59, 130, 246, 0.3)';
+                          e.target.style.transform = 'translateY(-2px)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.background = 'rgba(59, 130, 246, 0.2)';
+                          e.target.style.transform = 'translateY(0)';
+                        }}
+                      >
                         <Play size={16} />
                         Watch Trailer
                       </button>
-                      <button style={{padding: '10px 20px', background: 'rgba(30, 41, 59, 0.4)', border: '1px solid rgba(59, 130, 246, 0.2)', color: '#60a5fa', borderRadius: '12px', fontSize: '14px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                      <button 
+                        style={{
+                          padding: '10px 20px', 
+                          background: 'rgba(30, 41, 59, 0.4)', 
+                          border: '1px solid rgba(59, 130, 246, 0.2)', 
+                          color: '#60a5fa', 
+                          borderRadius: '12px', 
+                          fontSize: '14px', 
+                          fontWeight: '500', 
+                          cursor: 'pointer', 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: '8px',
+                          transition: 'all 0.3s'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.target.style.background = 'rgba(51, 65, 85, 0.4)';
+                          e.target.style.transform = 'translateY(-2px)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.background = 'rgba(30, 41, 59, 0.4)';
+                          e.target.style.transform = 'translateY(0)';
+                        }}
+                      >
                         <BookmarkPlus size={16} />
                         Add to List
                       </button>
-                      <button style={{padding: '10px 20px', background: 'rgba(30, 41, 59, 0.4)', border: '1px solid rgba(59, 130, 246, 0.2)', color: '#60a5fa', borderRadius: '12px', fontSize: '14px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                      <button 
+                        style={{
+                          padding: '10px 20px', 
+                          background: 'rgba(30, 41, 59, 0.4)', 
+                          border: '1px solid rgba(59, 130, 246, 0.2)', 
+                          color: '#60a5fa', 
+                          borderRadius: '12px', 
+                          fontSize: '14px', 
+                          fontWeight: '500', 
+                          cursor: 'pointer', 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: '8px',
+                          transition: 'all 0.3s'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.target.style.background = 'rgba(51, 65, 85, 0.4)';
+                          e.target.style.transform = 'translateY(-2px)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.background = 'rgba(30, 41, 59, 0.4)';
+                          e.target.style.transform = 'translateY(0)';
+                        }}
+                      >
                         <Share2 size={16} />
                         Share
                       </button>
@@ -989,7 +1081,11 @@ Format your response as JSON only, with no preamble or markdown:
           padding: 0;
         }
         
-        @media (max-width: 1024px) {
+        @media (max-width: 768px) {
+          h1 {
+            font-size: 48px !important;
+          }
+          
           .movieContent {
             flex-direction: column !important;
           }
